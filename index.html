@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ESP32 LED remote</title>
+<style>
+  :root{
+    --ink:#14161a; --panel:#1d2026; --line:#2d323b; --text:#e8e6e1; --muted:#8b909a;
+    --r:#ff5a4f; --g:#3ddc84; --b:#4f8cff;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;min-height:100vh;background:var(--ink);color:var(--text);
+       font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+       display:flex;justify-content:center;padding:24px 16px}
+  main{width:100%;max-width:420px}
+  h1{font-size:1.25rem;font-weight:600;margin:0 0 4px}
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0 22px}
+  .chip{font-size:.8rem;padding:4px 10px;border-radius:99px;background:var(--panel);
+        border:1px solid var(--line);color:var(--muted)}
+  .chip.ok{color:var(--g);border-color:#285c40}
+  .chip.bad{color:var(--r);border-color:#6b2e2a}
+  form,.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  label{display:block;font-size:.85rem;color:var(--muted);margin:12px 0 4px}
+  label:first-of-type{margin-top:0}
+  input[type=text],input[type=password],input[type=number]{
+    width:100%;padding:11px 12px;border-radius:9px;border:1px solid var(--line);
+    background:var(--ink);color:var(--text);font-size:1rem}
+  .row{display:flex;gap:10px}
+  .row>div{flex:1}
+  .check{display:flex;align-items:center;gap:8px;margin:14px 0 0;color:var(--muted);font-size:.85rem}
+  button{font:inherit;cursor:pointer;border:0;border-radius:11px;color:#fff}
+  button:focus-visible,input:focus-visible{outline:2px solid #fff;outline-offset:2px}
+  #connect{width:100%;margin-top:16px;padding:13px;background:#3a4150;font-weight:600}
+  #msg{min-height:1.2em;margin:12px 0 0;font-size:.85rem;color:var(--r)}
+  #bulb{width:150px;height:150px;border-radius:50%;margin:6px auto 24px;
+        background:#2a2e36;transition:background .25s,box-shadow .25s}
+  .colors{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  .colors button{padding:20px 0;font-size:1rem;font-weight:600;opacity:.4;
+                 transition:opacity .15s,box-shadow .15s}
+  .colors button[aria-pressed=true]{opacity:1;box-shadow:0 0 16px currentColor}
+  #bR{background:var(--r);color:var(--r)} #bG{background:var(--g);color:var(--g)} #bB{background:var(--b);color:var(--b)}
+  .colors button span{color:#fff}
+  .all{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px}
+  .all button{padding:14px;background:#3a4150}
+  #leave{display:block;margin:18px auto 0;background:none;color:var(--muted);font-size:.85rem;text-decoration:underline}
+  [hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <h1>ESP32 LED remote</h1>
+  <div class="chips">
+    <span class="chip" id="cBroker">Broker: disconnected</span>
+    <span class="chip" id="cBoard">Board: unknown</span>
+  </div>
+
+  <form id="login" autocomplete="on">
+    <label for="host">Broker address</label>
+    <input type="text" id="host" placeholder="your-address.emqxsl.com" autocapitalize="off" required>
+    <div class="row">
+      <div>
+        <label for="port">WebSocket TLS port</label>
+        <input type="number" id="port" value="8084" required>
+      </div>
+      <div>
+        <label for="user">Username</label>
+        <input type="text" id="user" autocapitalize="off" required>
+      </div>
+    </div>
+    <label for="pass">Password</label>
+    <input type="password" id="pass" required>
+    <label class="check"><input type="checkbox" id="remember"> Remember password on this device</label>
+    <button type="submit" id="connect">Connect</button>
+    <p id="msg" role="alert"></p>
+  </form>
+
+  <section class="card" id="panel" hidden>
+    <div id="bulb" aria-hidden="true"></div>
+    <div class="colors">
+      <button type="button" id="bR" aria-pressed="false">Red</button>
+      <button type="button" id="bG" aria-pressed="false">Green</button>
+      <button type="button" id="bB" aria-pressed="false">Blue</button>
+    </div>
+    <div class="all">
+      <button type="button" id="allOn">All on</button>
+      <button type="button" id="allOff">All off</button>
+    </div>
+    <button type="button" id="leave">Disconnect</button>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const NAMES = ['red', 'green', 'blue'];
+const BTNS = ['bR', 'bG', 'bB'];
+const state = [false, false, false];
+let client = null;
+
+// Remembered settings (password only if the box is ticked)
+try {
+  const s = JSON.parse(localStorage.getItem('esp32led') || '{}');
+  if (s.host) $('host').value = s.host;
+  if (s.port) $('port').value = s.port;
+  if (s.user) $('user').value = s.user;
+  if (s.pass) { $('pass').value = s.pass; $('remember').checked = true; }
+} catch (e) {}
+
+function save() {
+  try {
+    localStorage.setItem('esp32led', JSON.stringify({
+      host: $('host').value.trim(), port: $('port').value, user: $('user').value.trim(),
+      pass: $('remember').checked ? $('pass').value : ''
+    }));
+  } catch (e) {}
+}
+
+function chip(el, text, cls) { el.textContent = text; el.className = 'chip ' + (cls || ''); }
+
+function draw() {
+  BTNS.forEach((id, i) => $(id).setAttribute('aria-pressed', state[i]));
+  const [r, g, b] = state.map(v => v ? 255 : 0);
+  const any = state.some(Boolean);
+  const col = `rgb(${r},${g},${b})`;
+  $('bulb').style.background = any ? col : '#2a2e36';
+  $('bulb').style.boxShadow = any ? `0 0 60px 10px ${col}` : 'none';
+}
+
+function send(topic, payload) {
+  if (client && client.connected) client.publish(topic, payload, { qos: 0 });
+}
+
+function connect(e) {
+  e.preventDefault();
+  if (typeof mqtt === 'undefined') {
+    $('msg').textContent = 'The MQTT library could not load. Check your internet connection and reload.';
+    return;
+  }
+  save();
+  $('msg').textContent = '';
+  chip($('cBroker'), 'Broker: connecting…');
+  const url = `wss://${$('host').value.trim()}:${$('port').value}/mqtt`;
+  client = mqtt.connect(url, {
+    username: $('user').value.trim(),
+    password: $('pass').value,
+    clientId: 'web-' + Math.random().toString(16).slice(2, 8),
+    reconnectPeriod: 3000,
+    connectTimeout: 8000
+  });
+
+  client.on('connect', () => {
+    chip($('cBroker'), 'Broker: connected', 'ok');
+    $('login').hidden = true;
+    $('panel').hidden = false;
+    client.subscribe(['esp32led/+/state', 'esp32led/status']);
+  });
+
+  client.on('message', (topic, buf) => {
+    const val = buf.toString().trim();
+    if (topic === 'esp32led/status') {
+      const on = val.toLowerCase() === 'online';
+      chip($('cBoard'), 'Board: ' + (on ? 'online' : 'offline'), on ? 'ok' : 'bad');
+      return;
+    }
+    const i = NAMES.findIndex(n => topic === `esp32led/${n}/state`);
+    if (i >= 0) { state[i] = /^(on|1|true)$/i.test(val); draw(); }
+  });
+
+  client.on('error', err => {
+    $('msg').textContent = 'Could not connect: ' + (err && err.message ? err.message : 'check address, port and login.');
+  });
+  client.on('close', () => chip($('cBroker'), 'Broker: disconnected', 'bad'));
+}
+
+function leave() {
+  if (client) { client.end(true); client = null; }
+  $('panel').hidden = true;
+  $('login').hidden = false;
+  chip($('cBroker'), 'Broker: disconnected');
+  chip($('cBoard'), 'Board: unknown');
+}
+
+$('login').addEventListener('submit', connect);
+BTNS.forEach((id, i) => $(id).addEventListener('click',
+  () => send(`esp32led/${NAMES[i]}/set`, state[i] ? 'OFF' : 'ON')));
+$('allOn').addEventListener('click', () => send('esp32led/all/set', 'ON'));
+$('allOff').addEventListener('click', () => send('esp32led/all/set', 'OFF'));
+$('leave').addEventListener('click', leave);
+draw();
+</script>
+</body>
+</html>
