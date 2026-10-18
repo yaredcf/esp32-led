@@ -57,18 +57,8 @@
   </div>
 
   <form id="login" autocomplete="on">
-    <label for="host">Broker address</label>
-    <input type="text" id="host" placeholder="your-address.emqxsl.com" autocapitalize="off" required>
-    <div class="row">
-      <div>
-        <label for="port">WebSocket TLS port</label>
-        <input type="number" id="port" value="8084" required>
-      </div>
-      <div>
-        <label for="user">Username</label>
-        <input type="text" id="user" autocapitalize="off" required>
-      </div>
-    </div>
+    <label for="user">Username</label>
+    <input type="text" id="user" autocapitalize="off" required>
     <label for="pass">Password</label>
     <input type="password" id="pass" required>
     <label class="check"><input type="checkbox" id="remember"> Remember password on this device</label>
@@ -94,6 +84,12 @@
 <script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
+
+// ---- Your broker settings: edit these two lines ----
+const BROKER_HOST = 'wc1faeca.ala.us-east-1.emqxsl.com';
+const BROKER_PORT = 8084;   // WebSocket TLS port
+// ----------------------------------------------------
+
 const NAMES = ['red', 'green', 'blue'];
 const BTNS = ['bR', 'bG', 'bB'];
 const state = [false, false, false];
@@ -102,8 +98,6 @@ let client = null;
 // Remembered settings (password only if the box is ticked)
 try {
   const s = JSON.parse(localStorage.getItem('esp32led') || '{}');
-  if (s.host) $('host').value = s.host;
-  if (s.port) $('port').value = s.port;
   if (s.user) $('user').value = s.user;
   if (s.pass) { $('pass').value = s.pass; $('remember').checked = true; }
 } catch (e) {}
@@ -111,7 +105,7 @@ try {
 function save() {
   try {
     localStorage.setItem('esp32led', JSON.stringify({
-      host: $('host').value.trim(), port: $('port').value, user: $('user').value.trim(),
+      user: $('user').value.trim(),
       pass: $('remember').checked ? $('pass').value : ''
     }));
   } catch (e) {}
@@ -140,8 +134,12 @@ function connect(e) {
   }
   save();
   $('msg').textContent = '';
+  if (BROKER_HOST.startsWith('PASTE')) {
+    $('msg').textContent = 'Set BROKER_HOST in the page’s code first.';
+    return;
+  }
   chip($('cBroker'), 'Broker: connecting…');
-  const url = `wss://${$('host').value.trim()}:${$('port').value}/mqtt`;
+  const url = `wss://${BROKER_HOST}:${BROKER_PORT}/mqtt`;
   client = mqtt.connect(url, {
     username: $('user').value.trim(),
     password: $('pass').value,
