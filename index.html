@@ -61,6 +61,7 @@
     <input type="text" id="user" autocapitalize="off" required>
     <label for="pass">Password</label>
     <input type="password" id="pass" required>
+    <label class="check"><input type="checkbox" id="showPass"> Show password</label>
     <label class="check"><input type="checkbox" id="remember"> Remember password on this device</label>
     <button type="submit" id="connect">Connect</button>
     <p id="msg" role="alert"></p>
@@ -180,6 +181,9 @@ function leave() {
   chip($('cBoard'), 'Board: unknown');
 }
 
+$('showPass').addEventListener('change', e => {
+  $('pass').type = e.target.checked ? 'text' : 'password';
+});
 $('login').addEventListener('submit', connect);
 BTNS.forEach((id, i) => $(id).addEventListener('click',
   () => send(`esp32led/${NAMES[i]}/set`, state[i] ? 'OFF' : 'ON')));
